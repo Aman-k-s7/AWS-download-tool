@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+logs/
+AWS_download_tool/
+.git/
+.env
+*.md
+clients.json
+download_script.py

@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>AgNext S3 Download Manager</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"/>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet"/>
+  <style>
+    :root{--primary:#1565c0;--primary-light:#e3f0ff;--success:#2e7d32;--danger:#c62828;--bg:#f0f4f8;--text-muted:#607d8b;--border:#cfd8dc}
+    body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;min-height:100vh}
+    .app-nav{background:var(--primary);padding:.85rem 0;box-shadow:0 2px 8px rgba(0,0,0,.15)}
+    .app-nav .brand{font-weight:700;font-size:1.15rem;color:#fff}
+    .app-nav .version{color:rgba(255,255,255,.55);font-size:.78rem}
+    .steps-bar{display:flex;align-items:flex-start;justify-content:space-between;position:relative;padding:0 8px;margin-bottom:2rem}
+    .steps-bar::before{content:"";position:absolute;top:19px;left:80px;right:80px;height:2px;background:var(--border);z-index:0}
+    .step-node{display:flex;flex-direction:column;align-items:center;z-index:1;flex:1}
+    .step-dot{width:38px;height:38px;border-radius:50%;background:var(--border);color:var(--text-muted);font-weight:700;font-size:.9rem;display:flex;align-items:center;justify-content:center;transition:all .3s;border:2px solid var(--border)}
+    .step-node.active .step-dot{background:var(--primary);color:#fff;border-color:var(--primary);box-shadow:0 0 0 4px rgba(21,101,192,.2)}
+    .step-node.done .step-dot{background:var(--success);color:#fff;border-color:var(--success)}
+    .step-name{font-size:.72rem;color:var(--text-muted);margin-top:6px;text-align:center}
+    .step-node.active .step-name{color:var(--primary);font-weight:600}
+    .step-node.done .step-name{color:var(--success)}
+    .wizard-card{border:none;border-radius:14px;box-shadow:0 4px 24px rgba(0,0,0,.08)}
+    .step-header{font-size:1.15rem;font-weight:700;color:#1a237e;margin-bottom:.25rem}
+    .step-sub{color:var(--text-muted);font-size:.85rem;margin-bottom:1.5rem}
+    .preset-pill{font-size:.75rem;padding:4px 10px;border-radius:20px;cursor:pointer;border:1px solid var(--border);background:#fff;color:#455a64;transition:all .15s;white-space:nowrap}
+    .preset-pill:hover,.preset-pill.active{background:var(--primary);color:#fff;border-color:var(--primary)}
+    .file-table{font-size:.82rem}
+    .file-table th{font-weight:600;background:#f8fafc}
+    .file-table td{vertical-align:middle}
+    .section-label{font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text-muted);margin-bottom:.6rem}
+    #logBox{background:#0d1117;color:#c9d1d9;font-family:"Consolas",monospace;font-size:.78rem;height:240px;overflow-y:auto;border-radius:8px;padding:.9rem 1rem;line-height:1.65}
+    .log-info{color:#79c0ff}.log-ok{color:#3fb950}.log-err{color:#f85149}.log-done{color:#58a6ff;font-weight:bold}
+    .stat-card{border-radius:10px;padding:1rem .75rem;text-align:center}
+    .stat-num{font-size:2.2rem;font-weight:800;line-height:1}
+    .stat-label{font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;margin-top:4px;opacity:.7}
+    .client-badge{display:inline-block;background:var(--primary-light);color:var(--primary);padding:4px 12px;border-radius:20px;font-size:.8rem;font-weight:600}
+    .file-count-badge{background:#e8f5e9;color:var(--success);padding:2px 10px;border-radius:12px;font-size:.75rem;font-weight:600}
+  </style>
+</head>
+<body>
+  <nav class="app-nav mb-4">
+    <div class="container d-flex justify-content-between align-items-center">
+      <span class="brand"><i class="bi bi-cloud-arrow-down-fill me-2"></i>AgNext S3 Download Manager</span>
+      <div class="d-flex align-items-center gap-3">
+        <span class="version" id="clientBadgeNav"></span>
+        <button id="btnLogout" class="btn btn-sm btn-outline-light d-none" onclick="logout()"><i class="bi bi-box-arrow-right me-1"></i>Logout</button>
+      </div>
+    </div>
+  </nav>
+  <div class="container" style="max-width:860px">
+    <div class="steps-bar" id="stepsBar">
+      <div class="step-node active" id="sn1"><div class="step-dot">1</div><div class="step-name">Login</div></div>
+      <div class="step-node" id="sn2"><div class="step-dot">2</div><div class="step-name">Browse<br>Files</div></div>
+      <div class="step-node" id="sn3"><div class="step-dot">3</div><div class="step-name">Download</div></div>
+    </div>
+    <div class="card wizard-card mb-3">
+      <div class="card-body p-4 p-md-5">
+        <div id="step1">
+          <div class="text-center py-5">
+            <div class="spinner-border text-primary mb-3" id="loginSpinner" style="width:3rem;height:3rem" role="status"></div>
+            <p class="text-muted" id="loginStatus">Connecting to Keycloak SSO…</p>
+            <div id="loginError" class="d-none mt-3">
+              <div class="alert alert-danger py-2 small mb-3" id="loginErrorMsg"></div>
+              <button class="btn btn-primary" onclick="retryLogin()"><i class="bi bi-arrow-repeat me-2"></i>Back to Login</button>
+            </div>
+          </div>
+        </div>
+        <div id="step2" class="d-none">
+          <div class="d-flex justify-content-between align-items-center mb-1">
+            <div class="step-header"><i class="bi bi-folder2-open me-2 text-primary"></i>Browse Files</div>
+            <span class="client-badge" id="clientBadge"></span>
+          </div>
+          <div class="step-sub">Filter by date, then select files to download.</div>
+          <div class="section-label">Quick Presets</div>
+          <div class="d-flex flex-wrap gap-2 mb-3">
+            <span class="preset-pill" onclick="setPreset('today')">Today</span>
+            <span class="preset-pill" onclick="setPreset('yesterday')">Yesterday</span>
+            <span class="preset-pill" onclick="setPreset('last7')">Last 7 days</span>
+            <span class="preset-pill" onclick="setPreset('last30')">Last 30 days</span>
+            <span class="preset-pill" onclick="setPreset('thismonth')">This month</span>
+            <span class="preset-pill" onclick="setPreset('fy2526')">FY 2025-26</span>
+          </div>
+          <div class="row g-2 mb-3">
+            <div class="col-sm-4">
+              <label class="form-label">Start Date</label>
+              <input type="date" id="startDate" class="form-control"/>
+            </div>
+            <div class="col-sm-4">
+              <label class="form-label">End Date</label>
+              <input type="date" id="endDate" class="form-control"/>
+            </div>
+            <div class="col-sm-3">
+              <label class="form-label">File Type</label>
+              <select id="filterExt" class="form-select">
+                <option value="">All types</option>
+                <option value=".json">JSON (.json)</option>
+                <option value=".csv">CSV (.csv)</option>
+                <option value=".txt">Text (.txt)</option>
+                <option value=".png">PNG (.png)</option>
+                <option value=".jpg">JPEG (.jpg)</option>
+                <option value=".pdf">PDF (.pdf)</option>
+                <option value=".zip">ZIP (.zip)</option>
+              </select>
+            </div>
+            <div class="col-sm-1 d-flex align-items-end">
+              <button class="btn btn-primary w-100" onclick="loadFiles()"><i class="bi bi-search"></i></button>
+            </div>
+          </div>
+          <div id="fileListArea" class="d-none">
+            <div class="mb-2">
+              <div class="input-group input-group-sm">
+                <span class="input-group-text"><i class="bi bi-search"></i></span>
+                <input type="text" id="searchInput" class="form-control" placeholder="Search multiple: r1, r2, abc (comma-separated)" oninput="filterFiles()"/>
+                <button class="btn btn-outline-secondary" type="button" onclick="document.getElementById('searchInput').value='';filterFiles()"><i class="bi bi-x"></i></button>
+              </div>
+            </div>
+            <ul class="nav nav-tabs nav-fill mb-2" id="dataTabs">
+              <li class="nav-item">
+                <button class="nav-link active" data-tab="samples" onclick="switchTab('samples')">
+                  <i class="bi bi-folder me-1"></i>Samples <span class="badge bg-success" id="sampleCountBadge">0</span>
+                </button>
+              </li>
+              <li class="nav-item">
+                <button class="nav-link" data-tab="datacollection" onclick="switchTab('datacollection')">
+                  <i class="bi bi-collection me-1"></i>Data Collection <span class="badge bg-primary" id="dcCountBadge">0</span>
+                </button>
+              </li>
+            </ul>
+            <!-- Samples tab -->
+            <div id="tabSamples">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <div>
+                  <input type="checkbox" id="selectAll" class="form-check-input me-2" onchange="toggleSelectAll()"/>
+                  <label for="selectAll" class="form-check-label fw-semibold small">Select All</label>
+                  <span class="file-count-badge ms-2" id="fileCountBadge">0 files</span>
+                </div>
+                <span class="text-muted small" id="selectedCount">0 selected</span>
+              </div>
+              <div style="max-height:320px;overflow-y:auto;border:1px solid var(--border);border-radius:8px">
+                <table class="table table-hover file-table mb-0">
+                  <thead><tr><th style="width:36px"></th><th>Sample Folder</th><th>Date (UTC)</th></tr></thead>
+                  <tbody id="fileTableBody"></tbody>
+                </table>
+              </div>
+            </div>
+            <!-- Data Collection tab -->
+            <div id="tabDatacollection" class="d-none">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <div>
+                  <input type="checkbox" id="selectAllDc" class="form-check-input me-2" onchange="toggleSelectAllDc()"/>
+                  <label for="selectAllDc" class="form-check-label fw-semibold small">Select All</label>
+                  <span class="file-count-badge ms-2" id="dcFileCountBadge">0 files</span>
+                </div>
+                <span class="text-muted small" id="dcSelectedCount">0 selected</span>
+              </div>
+              <p class="text-muted small mb-2"><i class="bi bi-info-circle me-1"></i>Click <i class="bi bi-chevron-right"></i> to expand and see sub-items. Select individual files or entire folders.</p>
+              <div style="max-height:400px;overflow-y:auto;border:1px solid var(--border);border-radius:8px">
+                <table class="table table-hover file-table mb-0">
+                  <thead><tr><th style="width:36px"></th><th>Data Collection Folder</th><th style="width:60px">Items</th></tr></thead>
+                  <tbody id="dcTableBody"></tbody>
+                </table>
+              </div>
+            </div>
+            <!-- Download options -->
+            <div class="mt-3 d-flex gap-3 align-items-center flex-wrap">
+              <div class="form-check form-check-inline small">
+                <input class="form-check-input" type="checkbox" id="chkOrganizeByType"/>
+                <label class="form-check-label" for="chkOrganizeByType">Organize ZIP by file type</label>
+              </div>
+              <div class="form-check form-check-inline small">
+                <input class="form-check-input" type="checkbox" id="chkIncludeDc"/>
+                <label class="form-check-label" for="chkIncludeDc">Include data collection in download</label>
+              </div>
+            </div>
+          </div>
+          <div id="fileLoading" class="text-center py-4 d-none">
+            <div class="spinner-border text-primary" role="status"></div>
+            <div class="text-muted mt-2 small">Connecting to S3 and listing sample folders...</div>
+          </div>
+          <div id="fileError" class="alert alert-danger d-none mt-3 py-2 small"></div>
+          <div id="fileEmpty" class="alert alert-info d-none mt-3 py-2 small"><i class="bi bi-info-circle me-1"></i>No files found for the selected date range.</div>
+        </div>
+        <div id="step3" class="d-none">
+          <div class="step-header"><i class="bi bi-download me-2 text-primary"></i>Download</div>
+          <div class="step-sub">Choose file types to include, then download.</div>
+          <div class="section-label">File Type Filter</div>
+          <p class="text-muted small mb-2">Select which file types to include in the ZIP (leave all unchecked to include everything):</p>
+          <div class="d-flex flex-wrap gap-2 mb-3" id="fileTypeFilters">
+            <label class="badge bg-light text-dark border px-3 py-2" style="cursor:pointer"><input type="checkbox" class="form-check-input me-1 ft-chk" value="images"/> Images</label>
+            <label class="badge bg-light text-dark border px-3 py-2" style="cursor:pointer"><input type="checkbox" class="form-check-input me-1 ft-chk" value="csv"/> CSV</label>
+            <label class="badge bg-light text-dark border px-3 py-2" style="cursor:pointer"><input type="checkbox" class="form-check-input me-1 ft-chk" value="json"/> JSON</label>
+            <label class="badge bg-light text-dark border px-3 py-2" style="cursor:pointer"><input type="checkbox" class="form-check-input me-1 ft-chk" value="excel"/> Excel</label>
+            <label class="badge bg-light text-dark border px-3 py-2" style="cursor:pointer"><input type="checkbox" class="form-check-input me-1 ft-chk" value="pdf"/> PDF</label>
+            <label class="badge bg-light text-dark border px-3 py-2" style="cursor:pointer"><input type="checkbox" class="form-check-input me-1 ft-chk" value="text"/> Text/Log</label>
+            <label class="badge bg-light text-dark border px-3 py-2" style="cursor:pointer"><input type="checkbox" class="form-check-input me-1 ft-chk" value="videos"/> Videos</label>
+            <label class="badge bg-light text-dark border px-3 py-2" style="cursor:pointer"><input type="checkbox" class="form-check-input me-1 ft-chk" value="xml"/> XML</label>
+          </div>
+          <div class="section-label">Progress</div>
+          <div id="logBox"><span style="color:#484f58">-- Waiting to start --</span></div>
+          <div class="mt-2 mb-1">
+            <div class="progress" style="height:7px" id="dlProgressBar">
+              <div class="progress-bar bg-success progress-bar-striped progress-bar-animated" id="dlProgressInner" style="width:0%"></div>
+            </div>
+            <div class="text-muted small mt-1 text-end" id="dlProgressText" style="min-height:1.1em"></div>
+          </div>
+          <div class="row g-3 mt-2">
+            <div class="col-4"><div class="stat-card bg-success bg-opacity-10 text-success"><div class="stat-num" id="statDl">0</div><div class="stat-label">Downloaded</div></div></div>
+            <div class="col-4"><div class="stat-card bg-danger bg-opacity-10 text-danger"><div class="stat-num" id="statFail">0</div><div class="stat-label">Failed</div></div></div>
+            <div class="col-4"><div class="stat-card bg-primary bg-opacity-10 text-primary"><div class="stat-num" id="statTotal">0</div><div class="stat-label">Total</div></div></div>
+          </div>
+          <div class="mt-3" id="downloadBtnArea">
+            <button class="btn btn-success px-4" id="btnStartDl" onclick="startDownload()"><i class="bi bi-file-earmark-zip me-2"></i>Download ZIP</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="d-flex justify-content-between mb-5">
+      <button id="btnBack" class="btn btn-outline-secondary" onclick="prevStep()" style="display:none"><i class="bi bi-arrow-left me-1"></i> Back</button>
+      <div></div>
+      <button id="btnNext" class="btn btn-primary px-4" onclick="nextStep()" style="display:none">Continue <i class="bi bi-arrow-right ms-1"></i></button>
+    </div>
+  </div>
+  <script>
+    console.log('%c AgNext S3 Download Manager — v1.0 ', 'background:#1565c0;color:#fff;font-weight:bold;font-size:13px;padding:4px 8px;border-radius:4px;');
+    console.log('[APP] Build: v1.0 | Loaded at:', new Date().toISOString());
+
+    // ─── State ───────────────────────────────────────────
+    const state = { step: 1, client: null, files: [], selectedKeys: [] };
+    let KC_REDIRECT  = 'http://localhost:8080/';  // overridden from config.INI after /api/kc-config loads
+    let KC_CFG       = {};  // filled from /api/kc-config
+
+    // Token stored in localStorage — persists across refreshes and tabs
+    function _getToken() { return localStorage.getItem('kc_access_token') || ''; }
+    function _setToken(t) { localStorage.setItem('kc_access_token', t); }
+    function _clearToken() { localStorage.removeItem('kc_access_token'); }
+
+    function _authHeader() {
+      return { 'Authorization': 'Bearer ' + _getToken() };
+    }
+
+    // ─── Keycloak auth URL (standard OAuth2 authorization code + PKCE) ──
+    function _kcAuthUrl() {
+      return KC_CFG.url + '/realms/' + KC_CFG.realm + '/protocol/openid-connect/auth'
+        + '?client_id=' + encodeURIComponent(KC_CFG.clientId)
+        + '&redirect_uri=' + encodeURIComponent(KC_REDIRECT)
+        + '&response_type=code'
+        + '&scope=openid';
+    }
+
+    function _kcLogoutUrl() {
+      return KC_CFG.url + '/realms/' + KC_CFG.realm + '/protocol/openid-connect/logout'
+        + '?client_id=' + encodeURIComponent(KC_CFG.clientId)
+        + '&post_logout_redirect_uri=' + encodeURIComponent(KC_REDIRECT);
+    }
+
+    // ─── Navigation ──────────────────────────────────────
+    function goToStep(n) {
+      console.log('[NAV] goToStep(' + n + ') — previous step:', state.step);
+      [1,2,3].forEach(i => {
+        document.getElementById('step'+i).classList.add('d-none');
+        const nd = document.getElementById('sn'+i);
+        nd.classList.remove('active','done');
+        if (i < n) nd.classList.add('done');
+      });
+      document.getElementById('step'+n).classList.remove('d-none');
+      document.getElementById('sn'+n).classList.add('active');
+      [1,2,3].forEach(i => {
+        const dot = document.querySelector('#sn'+i+' .step-dot');
+        dot.innerHTML = i < n ? '<i class="bi bi-check-lg"></i>' : i;
+      });
+      document.getElementById('btnBack').style.display = n === 3 ? 'inline-block' : 'none';
+      document.getElementById('btnNext').style.display = n === 2 ? 'inline-block' : 'none';
+      // Show logout on all steps once authenticated
+      if (_getToken()) document.getElementById('btnLogout').classList.remove('d-none');
+      state.step = n;
+    }
+
+    async function nextStep() {
+      console.log('[NAV] nextStep() called — current step:', state.step);
+      if (state.step === 2) {
+        const sel = getSelectedKeys();
+        console.log('[NAV] Selected keys count:', sel.length, '| keys:', sel);
+        if (!sel.length) { document.getElementById('fileError').textContent = 'Please select at least one folder.'; document.getElementById('fileError').classList.remove('d-none'); return; }
+        document.getElementById('fileError').classList.add('d-none');
+        state.selectedKeys = sel;
+        document.getElementById('statTotal').textContent = sel.length;
+      }
+      goToStep(state.step + 1);
+    }
+
+    function prevStep() {
+      if (state.step > 2) goToStep(state.step - 1);
+    }
+
+    function logout() {
+      console.log('[AUTH] logout() called — clearing token and redirecting to Keycloak logout');
+      fetch('/api/logout', { method: 'POST', headers: _authHeader() }).catch((e) => console.warn('[AUTH] /api/logout request failed (non-critical):', e));
+      _clearToken();
+      sessionStorage.removeItem('kc_redirect_ts');
+      const logoutUrl = _kcLogoutUrl();
+      console.log('[AUTH] Redirecting to Keycloak logout URL:', logoutUrl);
+      window.location.href = logoutUrl;
+    }
+
+    function retryLogin() {
+      console.log('[AUTH] retryLogin() called — clearing token and reloading page');
+      _clearToken();
+      sessionStorage.removeItem('kc_redirect_ts');
+      // Do NOT call _kcLogoutUrl() here — that ends the Keycloak SSO session and
+      // forces the user to re-enter credentials every time there is a transient
+      // backend error. Reload the page instead; the KC session stays alive so
+      // Keycloak will silently re-issue a code without prompting for login again.
+      window.location.href = window.location.pathname;
+    }
+
+    // ─── Date presets ────────────────────────────────────
+    function setPreset(p) {
+      const t = new Date(); t.setHours(0,0,0,0); let s, e;
+      switch(p) {
+        case 'today': s = e = fmt(t); break;
+        case 'yesterday': { const d = new Date(t); d.setDate(d.getDate()-1); s = e = fmt(d); break; }
+        case 'last7': { const d = new Date(t); d.setDate(d.getDate()-6); s = fmt(d); e = fmt(t); break; }
+        case 'last30': { const d = new Date(t); d.setDate(d.getDate()-29); s = fmt(d); e = fmt(t); break; }
+        case 'thismonth': { s = fmt(new Date(t.getFullYear(), t.getMonth(), 1)); e = fmt(t); break; }
+        case 'fy2526': s = '2025-04-01'; e = '2026-03-31'; break;
+      }
+      document.getElementById('startDate').value = s;
+      document.getElementById('endDate').value = e;
+      document.querySelectorAll('.preset-pill').forEach(p => p.classList.remove('active'));
+      event.target.classList.add('active');
+    }
+
+    // ─── File listing ────────────────────────────────────
+    let dcFiles = []; // Data collection files cache
+
+    async function loadFiles() {
+      const start = document.getElementById('startDate').value;
+      const end = document.getElementById('endDate').value;
+      console.log('[FILES] loadFiles() called — start_date:', start, '| end_date:', end || start);
+      const errEl = document.getElementById('fileError');
+      const emptyEl = document.getElementById('fileEmpty');
+      errEl.classList.add('d-none'); emptyEl.classList.add('d-none');
+      document.getElementById('fileListArea').classList.add('d-none');
+      if (!start) { errEl.textContent = 'Start date is required.'; errEl.classList.remove('d-none'); return; }
+      document.getElementById('fileLoading').classList.remove('d-none');
+      try {
+        const filter = document.getElementById('filterExt').value;
+        const params = new URLSearchParams({ start_date: start, end_date: end || start });
+        if (filter) params.set('filter', filter);
+        console.log('[FILES] Fetching /api/files?' + params + ' | token present:', !!_getToken());
+        const res = await fetch('/api/files?' + params, { headers: _authHeader() });
+        console.log('[FILES] /api/files response status:', res.status);
+        if (!res.ok) { console.error('[FILES] /api/files failed with HTTP', res.status); }
+        const data = await res.json();
+        if (data.error) { console.error('[FILES] API returned error:', data.error); errEl.textContent = data.error; errEl.classList.remove('d-none'); return; }
+        state.files = data.files || [];
+        dcFiles = data.data_collection || [];
+        console.log('[FILES] Received — sample folders:', state.files.length, '| data_collection folders:', dcFiles.length);
+        document.getElementById('sampleCountBadge').textContent = state.files.length;
+        document.getElementById('dcCountBadge').textContent = dcFiles.length;
+        if (!state.files.length && !dcFiles.length) { console.warn('[FILES] No files found for selected date range'); emptyEl.classList.remove('d-none'); return; }
+        renderFiles();
+        renderDcFiles();
+        document.getElementById('fileListArea').classList.remove('d-none');
+      } catch(e) { console.error('[FILES] loadFiles() exception:', e); errEl.textContent = 'Failed to connect. Is the server running?'; errEl.classList.remove('d-none'); }
+      finally { document.getElementById('fileLoading').classList.add('d-none'); }
+    }
+
+    // Multi-search: supports comma-separated terms (OR logic)
+    // e.g. "r1, r2, abc" matches any folder containing r1 OR r2 OR abc
+    function matchesSearch(name, rawSearch) {
+      if (!rawSearch) return true;
+      const terms = rawSearch.split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
+      if (!terms.length) return true;
+      const lower = name.toLowerCase();
+      return terms.some(t => lower.includes(t));
+    }
+
+    function renderFiles() {
+      const tbody = document.getElementById('fileTableBody'); tbody.innerHTML = '';
+      const searchTerm = (document.getElementById('searchInput').value || '').trim();
+      const filtered = searchTerm ? state.files.filter(f => matchesSearch(f.name, searchTerm)) : state.files;
+      filtered.forEach((f, i) => {
+        const realIdx = state.files.indexOf(f);
+        const tr = document.createElement('tr');
+        tr.innerHTML = '<td><input type="checkbox" class="form-check-input file-cb" data-idx="'+realIdx+'" onchange="updateCount()"/></td>'
+          + '<td title="'+esc(f.key)+'"><i class="bi bi-folder me-1 text-warning"></i>'+esc(f.name)+'</td>'
+          + '<td class="text-muted">'+f.date+'</td>';
+        tbody.appendChild(tr);
+      });
+      document.getElementById('fileCountBadge').textContent = filtered.length + ' folders';
+      document.getElementById('selectAll').checked = false;
+      updateCount();
+    }
+
+    function renderDcFiles() {
+      const tbody = document.getElementById('dcTableBody'); tbody.innerHTML = '';
+      const searchTerm = (document.getElementById('searchInput').value || '').trim();
+      const filtered = searchTerm ? dcFiles.filter(f => matchesSearch(f.name, searchTerm)) : dcFiles;
+      filtered.forEach((f, i) => {
+        const realIdx = dcFiles.indexOf(f);
+        const tr = document.createElement('tr');
+        tr.dataset.key = f.key;
+        tr.dataset.idx = realIdx;
+        tr.innerHTML = '<td><input type="checkbox" class="form-check-input dc-cb" data-idx="'+realIdx+'" onchange="updateDcCount()"/></td>'
+          + '<td>'
+          + '<span class="dc-expand-btn" style="cursor:pointer;margin-right:6px;" data-key="'+esc(f.key)+'" data-expanded="0" onclick="toggleDcExpand(this)">'
+          + '<i class="bi bi-chevron-right"></i></span>'
+          + '<i class="bi bi-folder me-1 text-primary"></i>'+esc(f.name)
+          + '</td>'
+          + '<td class="text-muted small dc-item-count" data-key="'+esc(f.key)+'">—</td>';
+        tbody.appendChild(tr);
+      });
+      document.getElementById('dcFileCountBadge').textContent = filtered.length + ' folders';
+      document.getElementById('selectAllDc').checked = false;
+      updateDcCount();
+    }
+
+    // Expand/collapse a data_collection folder to show sub-items
+    const dcExpandCache = {}; // cache expanded results by key
+
+    async function toggleDcExpand(btn) {
+      const key = btn.dataset.key;
+      const isExpanded = btn.dataset.expanded === '1';
+
+      if (isExpanded) {
+        // Collapse: remove child rows
+        btn.dataset.expanded = '0';
+        btn.querySelector('i').className = 'bi bi-chevron-right';
+        document.querySelectorAll(`tr[data-parent-key="${CSS.escape(key)}"]`).forEach(r => r.remove());
+        updateDcCount();
+        return;
+      }
+
+      // Expand
+      btn.dataset.expanded = '1';
+      btn.querySelector('i').className = 'bi bi-chevron-down';
+
+      const parentRow = btn.closest('tr');
+
+      // Check cache first
+      if (dcExpandCache[key]) {
+        insertDcChildren(parentRow, key, dcExpandCache[key]);
+        return;
+      }
+
+      // Loading indicator
+      const loadingRow = document.createElement('tr');
+      loadingRow.dataset.parentKey = key;
+      loadingRow.innerHTML = '<td></td><td colspan="2" class="text-muted small ps-4"><span class="spinner-border spinner-border-sm me-1"></span>Loading...</td>';
+      parentRow.after(loadingRow);
+
+      try {
+        console.log('[DC] Expanding prefix:', key);
+        const res = await fetch('/api/dc-expand?prefix=' + encodeURIComponent(key), { headers: _authHeader() });
+        console.log('[DC] /api/dc-expand response status:', res.status);
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        console.log('[DC] Expanded — subfolders:', (data.subfolders||[]).length, '| files:', (data.files||[]).length);
+        dcExpandCache[key] = data;
+
+        // Update item count
+        const countEl = document.querySelector(`.dc-item-count[data-key="${CSS.escape(key)}"]`);
+        if (countEl) countEl.textContent = data.total;
+
+        // Remove loading row
+        loadingRow.remove();
+
+        insertDcChildren(parentRow, key, data);
+      } catch (err) {
+        loadingRow.innerHTML = '<td></td><td colspan="2" class="text-danger small ps-4"><i class="bi bi-exclamation-triangle me-1"></i>'+esc(err.message)+'</td>';
+      }
+    }
+
+    function insertDcChildren(parentRow, parentKey, data) {
+      let insertAfter = parentRow;
+
+      // Subfolders
+      (data.subfolders || []).forEach(sf => {
+        const tr = document.createElement('tr');
+        tr.dataset.parentKey = parentKey;
+        tr.innerHTML = '<td><input type="checkbox" class="form-check-input dc-cb" data-key="'+esc(sf.key)+'" onchange="updateDcCount()"/></td>'
+          + '<td class="ps-4">'
+          + '<span class="dc-expand-btn" style="cursor:pointer;margin-right:6px;" data-key="'+esc(sf.key)+'" data-expanded="0" onclick="toggleDcExpand(this)">'
+          + '<i class="bi bi-chevron-right"></i></span>'
+          + '<i class="bi bi-folder me-1 text-warning"></i>'+esc(sf.name)
+          + '</td>'
+          + '<td class="text-muted small dc-item-count" data-key="'+esc(sf.key)+'">—</td>';
+        insertAfter.after(tr);
+        insertAfter = tr;
+      });
+
+      // Files
+      (data.files || []).forEach(f => {
+        const sizeKb = f.size ? (f.size / 1024).toFixed(1) + ' KB' : '';
+        const tr = document.createElement('tr');
+        tr.dataset.parentKey = parentKey;
+        tr.innerHTML = '<td><input type="checkbox" class="form-check-input dc-file-cb" data-key="'+esc(f.key)+'" onchange="updateDcCount()"/></td>'
+          + '<td class="ps-4"><i class="bi bi-file-earmark me-1 text-secondary"></i>'+esc(f.name)+'</td>'
+          + '<td class="text-muted small">'+sizeKb+'</td>';
+        insertAfter.after(tr);
+        insertAfter = tr;
+      });
+      updateDcCount();
+    }
+
+    function filterFiles() {
+      renderFiles();
+      renderDcFiles();
+    }
+
+    function switchTab(tab) {
+      document.querySelectorAll('#dataTabs .nav-link').forEach(t => t.classList.remove('active'));
+      document.querySelector(`#dataTabs [data-tab="${tab}"]`).classList.add('active');
+      document.getElementById('tabSamples').classList.toggle('d-none', tab !== 'samples');
+      document.getElementById('tabDatacollection').classList.toggle('d-none', tab !== 'datacollection');
+    }
+
+    function toggleSelectAll() { const checked = document.getElementById('selectAll').checked; document.querySelectorAll('.file-cb').forEach(cb => cb.checked = checked); updateCount(); }
+    function toggleSelectAllDc() {
+      const checked = document.getElementById('selectAllDc').checked;
+      document.querySelectorAll('#dcTableBody input[type="checkbox"]').forEach(cb => cb.checked = checked);
+      updateDcCount();
+    }
+    function updateCount() { const count = document.querySelectorAll('.file-cb:checked').length; document.getElementById('selectedCount').textContent = count + ' selected'; }
+    function updateDcCount() {
+      const count = document.querySelectorAll('#dcTableBody input[type="checkbox"]:checked').length;
+      document.getElementById('dcSelectedCount').textContent = count + ' selected';
+    }
+    function getSelectedKeys() {
+      const keys = [];
+      document.querySelectorAll('.file-cb:checked').forEach(cb => { keys.push(state.files[parseInt(cb.dataset.idx)].key); });
+      // Include data collection: get keys from checked DC items
+      const includeDc = document.getElementById('chkIncludeDc').checked;
+      if (includeDc) {
+        // Include all top-level DC folder keys
+        dcFiles.forEach(f => keys.push(f.key));
+      } else {
+        // Include only checked DC items (folders or individual files)
+        document.querySelectorAll('#dcTableBody input[type="checkbox"]:checked').forEach(cb => {
+          const key = cb.dataset.key || (cb.dataset.idx !== undefined ? dcFiles[parseInt(cb.dataset.idx)].key : null);
+          if (key) keys.push(key);
+        });
+      }
+      return keys;
+    }
+
+    // ─── Download ────────────────────────────────────────
+    async function startDownload() {
+      const keys = state.selectedKeys;
+      console.log('[DOWNLOAD] startDownload() — selected keys:', keys.length, '| keys:', keys);
+      const btn = document.getElementById('btnStartDl'); btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Packaging...';
+      const logBox = document.getElementById('logBox'); logBox.innerHTML = '';
+      document.getElementById('dlProgressInner').style.width = '0%';
+      document.getElementById('dlProgressInner').classList.add('progress-bar-animated');
+      document.getElementById('dlProgressText').textContent = '';
+      document.getElementById('statDl').textContent = '0';
+      document.getElementById('statFail').textContent = '0';
+      const params = new URLSearchParams({ keys: keys.join(',') });
+      if (document.getElementById('chkOrganizeByType').checked) params.set('organize_by_type', '1');
+      // File type filter: only include selected types (empty = all)
+      const selectedTypes = Array.from(document.querySelectorAll('.ft-chk:checked')).map(c => c.value);
+      if (selectedTypes.length > 0) params.set('file_types', selectedTypes.join(','));
+      console.log('[DOWNLOAD] Calling /api/download/prepare — organize:', document.getElementById('chkOrganizeByType').checked, '| file_types:', selectedTypes.join(',') || 'all');
+      try {
+        const res = await fetch('/api/download/prepare?' + params, { headers: _authHeader() });
+        console.log('[DOWNLOAD] /api/download/prepare response status:', res.status);
+        if (!res.ok) { appendLog('log-err','[ERROR] Server returned ' + res.status); btn.disabled = false; btn.innerHTML = '<i class="bi bi-file-earmark-zip me-2"></i>Retry'; return; }
+        const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
+        while (true) {
+          const { done, value } = await reader.read(); if (done) break;
+          buf += dec.decode(value, { stream: true });
+          const lines = buf.split('\n'); buf = lines.pop();
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            let evt; try { evt = JSON.parse(line.slice(6)); } catch { continue; }
+            if (evt.type === 'progress') {
+              document.getElementById('dlProgressInner').style.width = evt.pct + '%';
+              document.getElementById('dlProgressText').textContent = evt.done + ' / ' + evt.total + ' files';
+              document.getElementById('statDl').textContent = evt.done;
+              appendLog('log-ok', evt.msg);
+            } else if (evt.type === 'log') {
+              appendLog(evt.cls === 'err' ? 'log-err' : 'log-info', evt.msg);
+            } else if (evt.type === 'error') {
+              appendLog('log-err', evt.msg);
+              document.getElementById('statFail').textContent = keys.length;
+              btn.disabled = false; btn.innerHTML = '<i class="bi bi-file-earmark-zip me-2"></i>Retry'; return;
+            } else if (evt.type === 'ready') {
+              console.log('[DOWNLOAD] Packaging ready — done:', evt.done, '| failed:', evt.failed, '| total:', evt.total, '| token:', evt.token);
+              document.getElementById('statDl').textContent = evt.done;
+              document.getElementById('statFail').textContent = evt.failed;
+              document.getElementById('dlProgressInner').style.width = '100%';
+              document.getElementById('dlProgressInner').classList.remove('progress-bar-animated');
+              document.getElementById('dlProgressText').textContent = 'Done: ' + evt.done + ' / ' + evt.total;
+              appendLog('log-done', '[DONE] Packaging complete. Starting download...');
+              console.log('[DOWNLOAD] Fetching ZIP from /api/download/get');
+              const dlRes = await fetch('/api/download/get?token=' + encodeURIComponent(evt.token), { headers: _authHeader() });
+              console.log('[DOWNLOAD] /api/download/get response status:', dlRes.status);
+              if (!dlRes.ok) { console.error('[DOWNLOAD] ZIP fetch failed with status:', dlRes.status); appendLog('log-err','[ERROR] Could not retrieve ZIP.'); btn.disabled = false; btn.innerHTML = '<i class="bi bi-file-earmark-zip me-2"></i>Retry'; return; }
+              const blob = await dlRes.blob(); const url = URL.createObjectURL(blob);
+              const cd = dlRes.headers.get('Content-Disposition');
+              const fname = cd && cd.includes('filename=') ? cd.split('filename=')[1].replace(/"/g,'') : 'download.zip';
+              console.log('[DOWNLOAD] ZIP blob received — filename:', fname, '| size:', blob.size, 'bytes — triggering browser download');
+              const a = document.createElement('a'); a.href = url; a.download = fname;
+              document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+              console.log('[DOWNLOAD] ✓ Download complete');
+              btn.innerHTML = '<i class="bi bi-check-circle me-2"></i>Downloaded!'; btn.classList.replace('btn-success','btn-outline-success');
+            }
+          }
+        }
+      } catch(e) { console.error('[DOWNLOAD] startDownload() exception:', e); appendLog('log-err','[ERROR] ' + e.message); document.getElementById('statFail').textContent = keys.length; btn.disabled = false; btn.innerHTML = '<i class="bi bi-file-earmark-zip me-2"></i>Retry'; }
+    }
+
+    function _logStorage(label) {
+      const token = localStorage.getItem('kc_access_token');
+      const redirectTs = sessionStorage.getItem('kc_redirect_ts');
+      console.log('[STORAGE] @' + label,
+        '| localStorage[kc_access_token]:', token ? ('present (' + token.length + ' chars, first 20: ' + token.substring(0, 20) + '...)') : 'EMPTY',
+        '| sessionStorage[kc_redirect_ts]:', redirectTs ? ('set (' + new Date(parseInt(redirectTs)).toISOString() + ')') : 'EMPTY'
+      );
+    }
+
+    function appendLog(cls, txt) { const box = document.getElementById('logBox'); const s = document.createElement('span'); s.className = cls; s.textContent = txt; box.appendChild(s); box.appendChild(document.createTextNode('\n')); box.scrollTop = box.scrollHeight; }
+    function fmt(d) { return d.toISOString().slice(0,10); }
+    function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+    // ─── Init: server-side authorization code flow ───────
+    (async function init() {
+      console.log('[AUTH] init() started — origin:', window.location.origin, 'path:', window.location.pathname);
+      _logStorage('init-start');
+      try {
+        // 1. Get Keycloak config from backend
+        console.log('[AUTH] Step 1: Fetching Keycloak config from /api/kc-config');
+        document.getElementById('loginStatus').textContent = 'Fetching Keycloak config…';
+        const cfgRes = await fetch('/api/kc-config');
+        KC_CFG = await cfgRes.json();
+        // Always use redirect_uri from config.INI — single source of truth, matches Keycloak registration
+        if (KC_CFG.redirectUri) {
+          KC_REDIRECT = KC_CFG.redirectUri;
+        }
+        console.log('[AUTH] Keycloak config received — realm:', KC_CFG.realm, 'clientId:', KC_CFG.clientId, 'url:', KC_CFG.url, '| redirect_uri:', KC_REDIRECT);
+
+        // 2. Check if we already have a token in localStorage
+        const savedToken = _getToken();
+        const urlParams = new URLSearchParams(window.location.search);
+        const code = urlParams.get('code');
+        const sessionState = urlParams.get('session_state');
+        console.log('[AUTH] Step 2: savedToken present=', !!savedToken, '| auth code in URL=', !!code);
+        _logStorage('step2-check');
+        if (code) {
+          console.log('%c [AUTH] ✓ Keycloak redirected back after successful login ', 'background:#2e7d32;color:#fff;font-weight:bold;padding:3px 8px;border-radius:4px;');
+          console.log('[AUTH] Keycloak callback received — code (first 12 chars):', code.substring(0, 12) + '...', '| session_state:', sessionState);
+        }
+
+        if (savedToken && !code) {
+          // Reuse existing token — go straight to dashboard (no /api/me)
+          _logStorage('existing-token-reuse');
+          console.log('[AUTH] Existing token found — going directly to dashboard');
+          document.getElementById('btnLogout').classList.remove('d-none');
+          goToStep(2);
+          return;
+        }
+
+        if (code) {
+          console.log('[AUTH] Step 3: Auth code received from Keycloak — exchanging for token');
+          document.getElementById('loginStatus').textContent = 'Exchanging authorization code…';
+          // Immediately clean URL to prevent loops on reload
+          window.history.replaceState({}, '', window.location.pathname);
+
+          // 3. Exchange code for token via backend
+          const tokenRes = await fetch('/api/token-exchange', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code: code, redirect_uri: KC_REDIRECT })
+          });
+          _logStorage('before-token-exchange');
+          console.log('[AUTH] /api/token-exchange response status:', tokenRes.status);
+
+          if (!tokenRes.ok) {
+            const err = await tokenRes.json().catch(() => ({}));
+            console.error('[AUTH] Token exchange failed:', err);
+            throw new Error(err.error || 'Token exchange failed');
+          }
+          const tokenData = await tokenRes.json();
+          console.log('[AUTH] Token exchange successful — access_token received, storing in localStorage');
+
+          // Persist token in localStorage (survives refresh, cleared on logout)
+          _setToken(tokenData.access_token);
+          _logStorage('after-token-stored');
+
+          console.log('[AUTH] ✓ Login complete — token stored, redirecting to dashboard (step 2)');
+          document.getElementById('btnLogout').classList.remove('d-none');
+          goToStep(2);  // ← redirect to dashboard
+        } else {
+          // Prevent infinite redirect loops
+          const lastRedirect = sessionStorage.getItem('kc_redirect_ts');
+          if (lastRedirect && (Date.now() - parseInt(lastRedirect)) < 5000) {
+            console.error('[AUTH] Redirect loop detected — aborting');
+            throw new Error('Redirect loop detected. Please clear cookies and try again.');
+          }
+          sessionStorage.setItem('kc_redirect_ts', Date.now().toString());
+          _logStorage('before-kc-redirect');
+          const authUrl = _kcAuthUrl();
+          console.log('[AUTH] No token or code — redirecting to Keycloak login:', authUrl);
+          document.getElementById('loginStatus').textContent = 'Redirecting to Keycloak login…';
+          // No code — redirect to Keycloak login
+          window.location.href = authUrl;
+        }
+      } catch(err) {
+        _logStorage('on-error');
+        console.error('[AUTH] Fatal auth error:', err.message, err);
+        document.getElementById('loginSpinner').classList.add('d-none');
+        document.getElementById('loginStatus').classList.add('d-none');
+        const el = document.getElementById('loginError');
+        document.getElementById('loginErrorMsg').textContent = err.message || 'Unknown error';
+        el.classList.remove('d-none');
+      }
+    })();
+  </script>
+</body>
+</html>
