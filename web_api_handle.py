@@ -21,6 +21,9 @@ from jwt import PyJWKClient
 
 logger = logging.getLogger(__name__)
 
+# JWKS client singleton — caches public keys from Keycloak
+_jwks_client = None
+
 # ── Config helpers ────────────────────────────────────────────
 
 def _get_keycloak_config() -> dict:
